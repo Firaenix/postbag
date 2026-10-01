@@ -18,7 +18,7 @@ impl<R: Read> SkipRead<R> {
 
     /// Read one byte.
     pub fn read_u8(&mut self) -> Result<u8> {
-        Ok(self.read(1)?[0])
+        self.0.read_u8()
     }
 
     /// Read `cnt` bytes.
@@ -82,10 +82,22 @@ impl<R: Read> SkipStack<R> {
         }
     }
 
+    fn read_u8(&mut self) -> Result<u8> {
+        match self {
+            Self::Base(base) => {
+                let mut byte = [0; 1];
+                base.read_exact(&mut byte)?;
+                Ok(byte[0])
+            }
+            Self::SkipBlock(sb) => sb.read_u8(),
+            Self::Dummy => unreachable!(),
+        }
+    }
+
     fn try_take_varint_u16(&mut self) -> Result<u16> {
         let mut out = 0;
         for i in 0..varint_max::<u16>() {
-            let val = self.read(1)?[0];
+            let val = self.read_u8()?;
             let carry = (val & 0x7F) as u16;
             out |= carry << (7 * i);
 
@@ -157,6 +169,16 @@ impl<R: Read> SkipBlock<R> {
         }
 
         Ok(buf)
+    }
+
+    fn read_u8(&mut self) -> Result<u8> {
+        self.update_remaining()?;
+        if self.remaining == 0 {
+            return Err(Error::EndOfBlock);
+        }
+        let byte = self.inner.read_u8()?;
+        self.remaining -= 1;
+        Ok(byte)
     }
 
     fn finish(mut self) -> Result<SkipStack<R>> {
